@@ -1,1 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>中小学英语助教Demo</title>
+    <style>
+        *{box-sizing:border-box;font-family:system-ui;-webkit-tap-highlight-color:transparent; touch-action: manipulation;}
+        body{max-width:800px;margin:20px auto;padding:0 16px;}
+        .task-box{margin-bottom:16px}
+        .task-btn{padding:10px 12px;margin:4px;border:none;border-radius:6px;background:#e8edf7;font-size:16px;}
+        .task-btn.active{background:#3b6fd9;color:white;}
+        select{padding:8px;border-radius:6px;margin-bottom:16px;font-size:16px;}
+        #userInput{width:100%;height:180px;padding:12px;border:1px solid #ccc;border-radius:8px;font-size:16px;}
+        .btns-row{margin:12px 0}
+        #submitBtn{background:#28a745;color:white;border:none;padding:10px 20px;border-radius:8px;font-size:16px;}
+        #clearBtn{background:#6c757d;color:white;border:none;padding:10px 20px;border-radius:8px;font-size:16px;margin-left:8px;}
+        #result{margin-top:16px;padding:16px;border:1px solid #ddd;border-radius:8px;white-space:pre-wrap;line-height:1.6}
+        .card{margin:12px 0;padding:14px;border:1px solid #ddd;border-radius:8px;}
+        .option{display:block;width:100%;text-align:left;padding:10px;margin:6px 0;border:1px solid #b9c8e3;border-radius:6px;background:#f7f9ff;font-size:16px;}
+        .option.correct{background:#dcf7dd;border-color:#28a745;color:#155724;}
+        .option.wrong{background:#ffe9e9;border-color:#dc3545;color:#721c24;}
+        .tip{margin:10px 0;padding:10px;background:#fff3cd;border-radius:6px;color:#856404;display:none;}
+        .explain{margin:10px 0;padding:10px;background:#e8f4ff;border-radius:6px;color:#004085;display:none;}
+        .next-btn{margin-top:12px;padding:8px 16px;border:none;border-radius:6px;background:#3b6fd9;color:white;font-size:16px;display:none;}
+        .progress-info{margin:8px 0;font-weight:bold;color:#333;}
+    </style>
+</head>
+<body>
+    <h2>英语助教</h2>
+    <div class="task-box">
+        <p>选择任务类型：</p>
+        <button class="task-btn" data-task="长难句【纯解析】">长难句【纯解析】</button>
+        <button class="task-btn" data-task="长难句【互动出题】">长难句【互动出题】</button>
+        <button class="task-btn" data-task="阅读出题">阅读出题</button>
+        <button class="task-btn" data-task="单词默写表">单词默写表</button>
+        <button class="task-btn" data-task="英语作文批改">作文批改</button>
+        <button class="task-btn" data-task="口语话题">口语话题</button>
+    </div>
+    <div>
+        <label>学段：</label>
+        <select id="gradeSel">
+            <option value="初中">初中</option>
+            <option value="高中">高中</option>
+        </select>
+    </div>
+    <textarea id="userInput" placeholder="粘贴英文句子/输入出题需求"></textarea>
+    <div class="btns-row">
+        <button id="submitBtn">提交生成</button>
+        <button id="clearBtn">清空</button>
+    </div>
+    <div id="result"></div>
+<script>
+// ⚠️部署完后端，回来替换这个地址
+const API_URL = "https://替换成你的render后端地址.onrender.com/api/chat";
+const basePrompt = `你是中小学英语智能助教。根据用户指令生成英语教学资源，可以完成阅读出题、单词默写表、批改英语作文、解析长难句、生成口语话题。
+输出排版干净，适配网页展示，不要多余的花哨格式。
+如果用户输入和英语教学无关，请礼貌回复：本助手仅提供中小学英语教学相关服务。
+语言尽量简洁易懂，贴合中学课堂使用场景。`;
+let currentTask = "";
+const resultBox = document.getElementById("result");
+const inputBox = document.getElementById("userInput");
+
+// 答题全局状态
+let questionList = [];
+let currentQIndex = 0;
+
+// HTML转义，防止特殊字符破坏页面
+function escapeHtml(str) {
+    if(!str) return "";
+    return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");
+}
+
+//绑定按钮点击
+document.querySelectorAll(".task-btn").forEach(btn=>{
+    btn.addEventListener("click",()=>{selectTask(btn.dataset.task, btn);})
+})
+function selectTask(taskName, domBtn){
+    currentTask = taskName;
+    document.querySelectorAll(".task-btn").forEach(b=>b.classList.remove("active"));
+    domBtn.classList.add("active");
+}
+const submitBtn = document.getElementById("submitBtn");
+submitBtn.addEventListener("click", submitTask);
+const clearBtn = document.getElementById("clearBtn");
+clearBtn.addEventListener("click", clearAll);
+async function submitTask(){
+    const promptText = inputBox.value.trim();
+    if(!currentTask){resultBox.innerText = "请先选择任务类型";return;}
+    if(!promptText){resultBox.innerText = "请输入内容";return;}
+    resultBox.innerText = "正在请求...";
+    let systemPrompt = basePrompt;
+    const grade = document.getElementById("gradeSel").value;
+
+    if(currentTask === "长难句【互动出题】"){
+        systemPrompt = `你是高中英语老师。阅读英文长难句，一次性生成2道语法单选题。
+严格按下面固定格式输出，**禁止任何额外文字、前言、解释**，只输出标记内容。
+每道题包含：片段、语法、题干、A选项、B选项、C选项、正确答案、答错提示、答案解析。
+---
+片段: 
+语法: 
+题干: 
+A:
+B:
+C:
+答案:
+提示:
+解析:
+---
+片段: 
+语法: 
+题干: 
+A:
+B:
+C:
+答案:
+提示:
+解析:
+---`;
+    }else if(currentTask === "长难句【纯解析】"){
+        systemPrompt = basePrompt + `
+任务：长难句纯解析。只做句子拆分、语法讲解、中文翻译，不要生成选择题，不要输出JSON，用清晰自然文本排版，贴合${grade}课堂。
+`;
+    }else if(currentTask === "阅读出题"){
+        systemPrompt = basePrompt + `任务：中小学英语阅读出题。根据需求生成阅读短文+配套题目，适配${grade}难度，排版清晰。`;
+    }else if(currentTask === "单词默写表"){
+        systemPrompt = basePrompt + `任务：单词默写表。生成适合${grade}的单词表，可区分英文默写/中文默写，排版干净方便打印。`;
+    }else if(currentTask === "英语作文批改"){
+        systemPrompt = basePrompt + `任务：英语作文批改。针对${grade}水平，指出语法错误、表达优化建议，给出评分和修改范文。`;
+    }else if(currentTask === "口语话题"){
+        systemPrompt = basePrompt + `任务：英语口语话题。生成适合${grade}的口语讨论话题，简单易懂，附带思路提示。`;
+    }
+
+    try{
+        const res = await fetch(API_URL,{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({model:"deepseek-chat",messages:[{"role":"system","content":systemPrompt},{"role":"user","content":`学段：${grade}，输入内容：${promptText}`}],temperature:0.1})
+        })
+        const raw = await res.json();
+        if(raw.error){resultBox.innerText = `API报错：${raw.error.message || raw.error}`;return;}
+        if(!raw.choices || raw.choices.length ===0){resultBox.innerText = "模型返回空内容，请重试！";return;}
+        const content = raw.choices[0].message.content.trim();
+
+        if(currentTask === "长难句【互动出题】"){
+            const blocks = content.split('---').filter(b=>b.trim());
+            questionList = [];
+            blocks.forEach(block=>{
+                const lines = block.split('\n').filter(l=>l.trim());
+                const q = {};
+                lines.forEach(line=>{
+                    if(line.startsWith("片段:")) q.seg = line.replace("片段:","").trim();
+                    if(line.startsWith("语法:")) q.grammar = line.replace("语法:","").trim();
+                    if(line.startsWith("题干:")) q.question = line.replace("题干:","").trim();
+                    if(line.startsWith("A:")) q.A = line.replace("A:","").trim();
+                    if(line.startsWith("B:")) q.B = line.replace("B:","").trim();
+                    if(line.startsWith("C:")) q.C = line.replace("C:","").trim();
+                    if(line.startsWith("答案:")) q.ans = line.replace("答案:","").trim();
+                    if(line.startsWith("提示:")) q.tip = line.replace("提示:","").trim();
+                    if(line.startsWith("解析:")) q.explain = line.replace("解析:","").trim();
+                })
+                if(q.question) questionList.push(q);
+            })
+            currentQIndex = 0;
+            renderQuestion();
+        }else{
+            resultBox.innerText = content;
+        }
+    }catch(err){
+        resultBox.innerText = `网络请求失败：${err.message}`;
+    }
+}
+//渲染互动选择题
+function renderQuestion(){
+    if(currentQIndex >= questionList.length){
+        resultBox.innerHTML = `<div>✅题目全部完成！</div>`;
+        return;
+    }
+    const q = questionList[currentQIndex];
+    resultBox.innerHTML = `
+    <div class="progress-info">第${currentQIndex+1}题 / 共${questionList.length}题</div>
+    <div class="card">
+        <div><b>句子片段：</b>${escapeHtml(q.seg)}</div>
+        <div><b>考点语法：</b>${escapeHtml(q.grammar)}</div>
+        <div style="margin:10px 0"><b>${escapeHtml(q.question)}</b></div>
+        <button class="option" data-opt="A">A. ${escapeHtml(q.A)}</button>
+        <button class="option" data-opt="B">B. ${escapeHtml(q.B)}</button>
+        <button class="option" data-opt="C">C. ${escapeHtml(q.C)}</button>
+        <div class="tip">${escapeHtml(q.tip)}</div>
+        <div class="explain">${escapeHtml(q.explain)}</div>
+        <button class="next-btn">下一题</button>
+    </div>`;
+    //绑定选项点击
+    document.querySelectorAll(".option").forEach(optBtn=>{
+        optBtn.onclick = ()=>{
+            const selected = optBtn.dataset.opt;
+            document.querySelectorAll(".option").forEach(b=>b.disabled=true);
+            if(selected === q.ans){
+                optBtn.classList.add("correct");
+            }else{
+                optBtn.classList.add("wrong");
+                document.querySelector(".tip").style.display="block";
+            }
+            //显示解析
+            document.querySelector(".explain").style.display="block";
+            document.querySelector(".next-btn").style.display="block";
+        }
+    })
+    document.querySelector(".next-btn").onclick = ()=>{
+        currentQIndex++;
+        renderQuestion();
+    }
+}
+
+//清空页面
+function clearAll(){
+    inputBox.value = "";
+    resultBox.innerText = "";
+    currentTask = "";
+    questionList = [];
+    currentQIndex = 0;
+    document.querySelectorAll(".task-btn").forEach(b=>b.classList.remove("active"));
+}
+</script>
+</body>
+</html>
 
